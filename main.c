@@ -1,6 +1,51 @@
 #include <efi.h>
 #include <efilib.h>
 
+static CHAR16 *LicensePath = L"\\EFI\\EFIshell\\LICENSE";
+static CHAR16 *GrubPath = L"\\EFI\\gentoo\\grubx64.efi";
+
+// static EFI_STATUS PrintFileContent(IN CHAR16 *FileName) {
+//    EFI_DEVICE_PATH *path;
+// }
+
+
+static VOID PrintBuffer(IN VOID* Buffer, IN UINTN Size) {
+   for (UINTN i = 0; i < Size; i++) {
+      CHAR8 *CharPtr = (CHAR8 *)(Buffer + i);
+      Print(L"%c", *CharPtr);
+   }
+}
+
+static EFI_STATUS PrintFileContent(IN EFI_HANDLE FileDevice, IN CONST CHAR16* FileName) {
+   EFI_STATUS status;
+   EFI_DEVICE_PATH *DevPath;
+   EFI_HANDLE DeviceHandle;
+   SIMPLE_READ_FILE LicenseFile;
+   CONST UINTN BufferSize = 510;
+   UINTN ReadSize;
+   VOID* Buffer;
+   UINTN FileOffset = 0;
+
+   DevPath = FileDevicePath(FileDevice, LicensePath);
+   status = OpenSimpleReadFile(FALSE, NULL, 0, &DevPath, &DeviceHandle, &LicenseFile);
+   if (EFI_ERROR(status)) 
+      return status;
+
+   Buffer = AllocateZeroPool(BufferSize + 2);
+         
+   do {
+      ReadSize = BufferSize;
+      status = ReadSimpleReadFile(LicenseFile, FileOffset, &ReadSize, Buffer);
+      PrintBuffer(Buffer, ReadSize);
+      FileOffset += ReadSize;
+   } while (status == EFI_SUCCESS && ReadSize > 0);
+   Print(L"\n");
+
+   FreePool(Buffer);
+   CloseSimpleReadFile(LicenseFile);
+   return status;
+}
+
 EFI_STATUS
 EFIAPI
 efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
@@ -25,16 +70,31 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
    
    switch(Char.UnicodeChar) {
       case '1':
-         // TODO
+         Print(L"Not implemented\n");
          break;
       case '2':
-         // TODO
+         EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+         EFI_GUID LoadedImageGUID = EFI_LOADED_IMAGE_PROTOCOL_GUID;        
+         EFI_STATUS status;
+         
+         status = uefi_call_wrapper(BootServices->HandleProtocol, 3, 
+                                    ImageHandle, &LoadedImageGUID, (void **) &LoadedImage);
+         if (EFI_ERROR(status)) {
+            Print(L"HandleProtocol: %r\n", status);
+            return EFI_SUCCESS;
+         }
+         
+         status = PrintFileContent(LoadedImage->DeviceHandle, LicensePath);
+         if (EFI_ERROR(status)) {
+            Print(L"PrintFileContent: %r\n", status);
+            return EFI_SUCCESS;
+         }
          break;
       case '3':
-         // TODO
+         Print(L"Not implemented\n");
          break;
       case '4':
-         // TODO
+         Print(L"Not implemented\n");
          break;
       default:
          Print(L"Invalid option number, quitting...\n");
