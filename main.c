@@ -4,10 +4,6 @@
 static CHAR16 *LicensePath = L"\\EFI\\EFIshell\\LICENSE";
 static CHAR16 *GrubPath = L"\\EFI\\gentoo\\grubx64.efi";
 
-// static EFI_STATUS PrintFileContent(IN CHAR16 *FileName) {
-//    EFI_DEVICE_PATH *path;
-// }
-
 
 static VOID PrintBuffer(IN VOID* Buffer, IN UINTN Size) {
    for (UINTN i = 0; i < Size; i++) {
@@ -16,56 +12,61 @@ static VOID PrintBuffer(IN VOID* Buffer, IN UINTN Size) {
    }
 }
 
-static EFI_STATUS PrintFileContent(IN EFI_HANDLE FileDevice, IN CONST CHAR16* FileName) {
+static EFI_STATUS GetLoadedImage(
+   IN EFI_HANDLE ImageHandle, 
+   IN EFI_SYSTEM_TABLE *SystemTable,
+   OUT EFI_LOADED_IMAGE_PROTOCOL **LoadedImage)
+{
+   EFI_GUID LoadedImageGUID = EFI_LOADED_IMAGE_PROTOCOL_GUID;        
    EFI_STATUS status;
-   EFI_DEVICE_PATH *DevPath;
-   EFI_HANDLE DeviceHandle;
-   SIMPLE_READ_FILE LicenseFile;
-   CONST UINTN BufferSize = 510;
+
+   status =  uefi_call_wrapper(
+      SystemTable->BootServices->HandleProtocol, 
+      3, 
+      ImageHandle, 
+      &LoadedImageGUID, 
+      (void **) LoadedImage);
+   return status;
+}
+
+static EFI_STATUS PrintFileContent(
+   IN SIMPLE_READ_FILE File) 
+{
+   EFI_STATUS status;
+   CONST UINTN BufferSize = 511;
    UINTN ReadSize;
-   VOID* Buffer;
+   VOID* Buffer = AllocateZeroPool(BufferSize + 1);
    UINTN FileOffset = 0;
-
-   DevPath = FileDevicePath(FileDevice, LicensePath);
-   status = OpenSimpleReadFile(FALSE, NULL, 0, &DevPath, &DeviceHandle, &LicenseFile);
-   if (EFI_ERROR(status)) 
-      return status;
-
-   Buffer = AllocateZeroPool(BufferSize + 2);
          
    do {
       ReadSize = BufferSize;
-      status = ReadSimpleReadFile(LicenseFile, FileOffset, &ReadSize, Buffer);
-      PrintBuffer(Buffer, ReadSize);
+      status = ReadSimpleReadFile(File, FileOffset, &ReadSize, Buffer);
+      if (ReadSize > 0)
+         PrintBuffer(Buffer, ReadSize);
       FileOffset += ReadSize;
    } while (status == EFI_SUCCESS && ReadSize > 0);
    Print(L"\n");
 
    FreePool(Buffer);
-   CloseSimpleReadFile(LicenseFile);
    return status;
 }
 
 EFI_STATUS
 EFIAPI
 efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+   EFI_INPUT_KEY Char;
    InitializeLib(ImageHandle, SystemTable);
    
-   SIMPLE_TEXT_OUTPUT_INTERFACE *ConOut = SystemTable->ConOut;
-   SIMPLE_INPUT_INTERFACE *ConIn = SystemTable->ConIn;
-   EFI_BOOT_SERVICES *BootServices = SystemTable->BootServices;
-   EFI_INPUT_KEY Char;
-   
-   uefi_call_wrapper(ConOut->ClearScreen, 1, ConOut);
+   uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
    Print(L"1) Boot\n");
    Print(L"2) License\n");
    Print(L"3) Reboot\n");
    Print(L"4) Halt\n");
    Print(L"Enter Your choice:");
 
-   uefi_call_wrapper(ConIn->Reset, 1, ConIn);
-   uefi_call_wrapper(BootServices->WaitForEvent, 3, 1, &ConIn->WaitForKey, NULL);
-   uefi_call_wrapper(ConIn->ReadKeyStroke, 2, ConIn, &Char);
+   uefi_call_wrapper(SystemTable->ConIn->Reset, 1, SystemTable->ConIn);
+   uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, &(SystemTable->ConIn->WaitForKey), NULL);
+   uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &Char);
    Print(L" %c\n", Char.UnicodeChar);
    
    switch(Char.UnicodeChar) {
@@ -73,22 +74,35 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
          Print(L"Not implemented\n");
          break;
       case '2':
-         EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
-         EFI_GUID LoadedImageGUID = EFI_LOADED_IMAGE_PROTOCOL_GUID;        
+         EFI_LOADED_IMAGE_PROTOCOL *LoadedImage = NULL;
+         EFI_DEVICE_PATH *DevPath;
+         EFI_HANDLE DeviceHandle;
+         SIMPLE_READ_FILE LicenseFile;
          EFI_STATUS status;
-         
-         status = uefi_call_wrapper(BootServices->HandleProtocol, 3, 
-                                    ImageHandle, &LoadedImageGUID, (void **) &LoadedImage);
+
+         status = GetLoadedImage(ImageHandle, SystemTable, &LoadedImage);
          if (EFI_ERROR(status)) {
-            Print(L"HandleProtocol: %r\n", status);
-            return EFI_SUCCESS;
+            Print(L"GetLoadedImage: %r\n", status);
+            return status;
          }
          
-         status = PrintFileContent(LoadedImage->DeviceHandle, LicensePath);
+         DevPath = FileDevicePath(LoadedImage->DeviceHandle, LicensePath);
+         status = OpenSimpleReadFile(FALSE, NULL, 0, &DevPath, &DeviceHandle, &LicenseFile);
+         if (EFI_ERROR(status)) {
+            Print(L"OpenSimpleReadFile: %r\n", status);
+            FreePool(DevPath);
+            return status;
+         }
+         
+         status = PrintFileContent(LicenseFile);
          if (EFI_ERROR(status)) {
             Print(L"PrintFileContent: %r\n", status);
-            return EFI_SUCCESS;
+            FreePool(DevPath);
+            return status;
          }
+
+         FreePool(DevPath);
+         CloseSimpleReadFile(LicenseFile);
          break;
       case '3':
          Print(L"Not implemented\n");
