@@ -51,7 +51,7 @@ EFI_STATUS
 EFIAPI
 efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) 
 {
-   EFI_INPUT_KEY Char;
+   CHAR16 *InputChar = L"\0\0\0";
    EFI_LOADED_IMAGE_PROTOCOL *LoadedImage = NULL;
    EFI_DEVICE_PATH *DevPath;
    EFI_HANDLE GrubHandle;
@@ -66,18 +66,8 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
    Print(L"2) License\n");
    Print(L"3) Reboot\n");
    Print(L"4) Halt\n");
-   Print(L"Enter Your choice:");
-
-   uefi_call_wrapper(SystemTable->ConIn->Reset, 1, SystemTable->ConIn);
-   uefi_call_wrapper(
-      SystemTable->BootServices->WaitForEvent, 
-      3, 
-      1, 
-      &(SystemTable->ConIn->WaitForKey), 
-      NULL
-   );
-   uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &Char);
-   Print(L" %c\n", Char.UnicodeChar);
+   Input(L"Enter Your choice: ", InputChar, 2);
+   Print(L"\n");
    
    status = GetLoadedImage(ImageHandle, SystemTable, &LoadedImage);
    if (EFI_ERROR(status)) {
@@ -85,7 +75,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
       return status;
    }
 
-   switch(Char.UnicodeChar) {
+   switch(*InputChar) {
       case '1':
          DevPath = FileDevicePath(LoadedImage->DeviceHandle, GrubPath);
          
@@ -136,13 +126,20 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
          CloseSimpleReadFile(LicenseFile);
          break;
       case '3':
-         Print(L"Not implemented\n");
+         uefi_call_wrapper(
+            SystemTable->RuntimeServices->ResetSystem,
+            4,
+            EfiResetWarm,
+            EFI_SUCCESS,
+            0,
+            NULL
+         );
          break;
       case '4':
          Print(L"Not implemented\n");
          break;
       default:
-         Print(L"Invalid option number, quitting...\n");
+         Print(L"Invalid option number: '%c', quitting...\n", *InputChar);
    }
 
    return EFI_SUCCESS;
