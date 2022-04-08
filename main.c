@@ -1,6 +1,13 @@
 #include <efi.h>
 #include <efilib.h>
 
+#define ERROR_CHECK(func, status)      \
+if (EFI_ERROR(status)) {               \
+   Print((func "" L": %r\n"), status); \
+   return status;                      \
+}
+
+/* Hard-coded file paths - may need to be changed */
 static CHAR16 *LicensePath = L"\\EFI\\EFIshell\\LICENSE";
 static CHAR16 *GrubPath = L"\\EFI\\gentoo\\grubx64.efi";
 
@@ -35,16 +42,22 @@ static EFI_STATUS PrintFileContent(
    do {
       ReadSize = BufferSize;
       status = ReadSimpleReadFile(File, FileOffset, &ReadSize, Buffer);
-      if (ReadSize > 0) {
-         ((CHAR8 *)Buffer)[ReadSize] = '\0';
-         Print(L"%a", Buffer);
-      }
+      
+      ((CHAR8 *)Buffer)[ReadSize] = '\0';
+      Print(L"%a", Buffer);
+      
       FileOffset += ReadSize;
    } while (status == EFI_SUCCESS && ReadSize > 0);
+   
    Print(L"\n");
 
    FreePool(Buffer);
    return status;
+}
+
+static VOID CpuPause () 
+{
+   asm("pause");
 }
 
 EFI_STATUS
@@ -61,7 +74,9 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
    
    InitializeLib(ImageHandle, SystemTable);
    
+   /* Clear screen, print menu and get user input */
    uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+print_menu:
    Print(L"1) Boot\n");
    Print(L"2) License\n");
    Print(L"3) Reboot\n");
@@ -70,13 +85,10 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
    Print(L"\n");
    
    status = GetLoadedImage(ImageHandle, SystemTable, &LoadedImage);
-   if (EFI_ERROR(status)) {
-      Print(L"GetLoadedImage: %r\n", status);
-      return status;
-   }
+   ERROR_CHECK(L"GetLoadedImage", status);
 
    switch(*InputChar) {
-      case '1':
+      case '1': /* Load grub and transfer control to it */
          DevPath = FileDevicePath(LoadedImage->DeviceHandle, GrubPath);
          
          status = uefi_call_wrapper(
@@ -90,42 +102,30 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
             &GrubHandle
          );
          FreePool(DevPath);
-         if (EFI_ERROR(status)) {
-            Print(L"LoadImage: %r\n", status);
-            return status;
-         }
+         ERROR_CHECK(L"LoadImage", status);
 
          status = uefi_call_wrapper(SystemTable->BootServices->StartImage, 3, GrubHandle, 0, NULL);
-         if (EFI_ERROR(status)) {
-            Print(L"StartImage: %r\n", status);
-            return status;
-         }
+         ERROR_CHECK(L"StartImage", status);
          
          status = uefi_call_wrapper(SystemTable->BootServices->UnloadImage, 1, GrubHandle);
-         if (EFI_ERROR(status)) {
-            Print(L"UnloadImage: %r\n", status);
-            return status;
-         }
+         ERROR_CHECK(L"UnloadImage", status);
          break;
-      case '2':
+      
+      case '2': /* Print contents of LICENSE file */
          DevPath = FileDevicePath(LoadedImage->DeviceHandle, LicensePath);
 
          status = OpenSimpleReadFile(FALSE, NULL, 0, &DevPath, &DeviceHandle, &LicenseFile);
          FreePool(DevPath);
-         if (EFI_ERROR(status)) {
-            Print(L"OpenSimpleReadFile: %r\n", status);
-            return status;
-         }
+         ERROR_CHECK(L"OpenSimpleReadFile", status);
          
          status = PrintFileContent(LicenseFile);
-         if (EFI_ERROR(status)) {
-            Print(L"PrintFileContent: %r\n", status);
-            return status;
-         }
+         ERROR_CHECK(L"PrintFileContent", status);
 
          CloseSimpleReadFile(LicenseFile);
+         goto print_menu;
          break;
-      case '3':
+      
+      case '3': /* Reboot */
          uefi_call_wrapper(
             SystemTable->RuntimeServices->ResetSystem,
             4,
@@ -135,11 +135,16 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
             NULL
          );
          break;
-      case '4':
-         Print(L"Not implemented\n");
+      
+      case '4': /* Halt the system. Only Ctrl+Alt+Del can be used to 
+         reboot after choosing this option */
+         while(1)
+            CpuPause();
          break;
+      
       default:
-         Print(L"Invalid option number: '%c', quitting...\n", *InputChar);
+         Print(L"Invalid option number: '%c'. Please try again\n", *InputChar);
+         goto print_menu;
    }
 
    return EFI_SUCCESS;
